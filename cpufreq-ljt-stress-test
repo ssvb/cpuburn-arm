@@ -95,7 +95,11 @@ end
 
 def get_freq_list(core)
     freq_list = read_file("/sys/devices/system/cpu/cpu#{core}/cpufreq/scaling_available_frequencies")
-    return [] if not freq_list
+    if not freq_list then
+        freq_list = read_file("/sys/devices/system/cpu/cpu#{core}/cpufreq/stats/time_in_state")
+        return [] if not freq_list
+        return freq_list.split(/\s+/).each_slice(2).map {|x| x[0].to_i}
+    end
     return freq_list.split(" ").map {|x| x.to_i}
 end
 
