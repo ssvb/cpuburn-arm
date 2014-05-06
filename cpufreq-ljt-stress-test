@@ -41,19 +41,74 @@ exit(1) if not tool_exists("md5sum") or
            not tool_exists("nproc") or
            not tool_exists("taskset")
 
-# Check if we have the right cjpeg and djpeg
+$cjpeg = "cjpeg"
+$djpeg = "djpeg"
 
-if not `djpeg -v </dev/null 2>&1` =~ /libjpeg\-turbo/ or
-   not `cjpeg -v </dev/null 2>&1` =~ /libjpeg\-turbo/
+def download_and_compile_libjpeg_turbo()
+    exit(1) if not tool_exists("wget") or
+               not tool_exists("tar") or
+               not tool_exists("gcc")
+
+    shellescaped_dirname = Shellwords.escape(File.dirname(__FILE__))
+    ljtname = File.join(File.dirname(__FILE__), "libjpeg-turbo-1.3.1")
+    shellescaped_ljtname = Shellwords.escape(ljtname)
+
+    if File.exists?(File.join(ljtname, "djpeg")) then
+        $cjpeg = Shellwords.escape(File.join(ljtname, "cjpeg"))
+        $djpeg = Shellwords.escape(File.join(ljtname, "djpeg"))
+        return
+    end
+
+    if not `md5sum #{shellescaped_ljtname}.tar.gz 2>&1` =~ /2c3a68129dac443a72815ff5bb374b05/ then
+        url = "http://downloads.sourceforge.net/project/libjpeg-turbo/1.3.1/libjpeg-turbo-1.3.1.tar.gz"
+        printf("Downloading libjpeg-turbo-1.3.1.tar.gz ...")
+        `wget -c #{url} -O #{shellescaped_ljtname}.tar.gz 2>&1`
+        if $?.to_i != 0 then
+            printf(" failed\n")
+            exit(1)
+        end
+        printf(" done\n")
+    end
+    if not `md5sum #{shellescaped_ljtname}.tar.gz 2>&1` =~ /2c3a68129dac443a72815ff5bb374b05/ then
+        printf("MD5 check failed for the downloaded libjpeg-turbo-1.3.1.tar.gz\n")
+        exit(1)
+    end
+
+    printf("Extracting libjpeg-turbo-1.3.1.tar.gz ...")
+    `tar -xzf #{shellescaped_ljtname}.tar.gz -C #{shellescaped_dirname}`
+    if $?.to_i != 0 then
+        printf(" failed\n")
+        exit(1)
+    end
+    printf(" done\n")
+
+    Dir.chdir(ljtname) {
+        printf("Compiling libjpeg-turbo, please be patient ...")
+        compilation_log = `./configure --disable-shared && make -j2 2>&1`
+        if $?.to_i != 0 then
+            printf(" failed\n%s\n", compilation_log)
+            exit(1)
+        end
+        printf(" done\n")
+    }
+
+    $cjpeg = Shellwords.escape(File.join(ljtname, "cjpeg"))
+    $djpeg = Shellwords.escape(File.join(ljtname, "djpeg"))
+end
+
+# Check if we have the right cjpeg and djpeg
+if not `#{$djpeg} -v </dev/null 2>&1` =~ /libjpeg\-turbo/ or
+   not `#{$cjpeg} -v </dev/null 2>&1` =~ /libjpeg\-turbo/
 then
-    printf("The cjpeg and djpeg tools from libjpeg-turbo are required\n")
-    exit(1)
+    printf("The cjpeg and djpeg tools from libjpeg-turbo are not found.\n")
+    printf("Trying to download and compile them.\n")
+    download_and_compile_libjpeg_turbo()
 end
 
 ###############################################################################
 
 def create_random_jpg(filename, width, height)
-    IO.popen(sprintf("cjpeg -q 95 > %s", Shellwords.escape(filename)), "wb") {|fh|
+    IO.popen(sprintf("#{$cjpeg} -q 95 > %s", Shellwords.escape(filename)), "wb") {|fh|
          fh.printf("P3\n%d %d\n255\n", width, height)
          fh.write(Random.new(0).bytes(3 * width * height).bytes.to_a.map {|x|
                   x.to_s }.join(" "))
@@ -144,11 +199,11 @@ end
             next
         end
         subtest_failed = false
-        expected_result = `taskset -c #{core} djpeg #{shellescaped_jpgname} | md5sum`
+        expected_result = `taskset -c #{core} #{$djpeg} #{shellescaped_jpgname} | md5sum`
         1.upto(60) {
             printf(".")
             STDOUT.flush
-            if `taskset -c #{core} djpeg #{shellescaped_jpgname} | md5sum` != expected_result
+            if `taskset -c #{core} #{$djpeg} #{shellescaped_jpgname} | md5sum` != expected_result
             then
                 subtest_failed = true
                 break
