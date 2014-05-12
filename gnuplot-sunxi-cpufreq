@@ -1,0 +1,112 @@
+#!/usr/bin/env ruby
+#
+# Copyright © 2014 Siarhei Siamashka <siarhei.siamashka@gmail.com>
+#
+# Permission is hereby granted, free of charge, to any person obtaining a
+# copy of this software and associated documentation files (the "Software"),
+# to deal in the Software without restriction, including without limitation
+# the rights to use, copy, modify, merge, publish, distribute, sublicense,
+# and/or sell copies of the Software, and to permit persons to whom the
+# Software is furnished to do so, subject to the following conditions:
+#
+# The above copyright notice and this permission notice (including the next
+# paragraph) shall be included in all copies or substantial portions of the
+# Software.
+#
+# THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+# IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+# FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT.  IN NO EVENT SHALL
+# THE AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+# LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING
+# FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER
+# DEALINGS IN THE SOFTWARE.
+
+require 'tempfile'
+
+# Test the availability of the required tools
+
+def tool_exists(tool_name)
+    `which #{tool_name} > /dev/null 2>&1`
+    if $?.to_i != 0 then
+        printf("Error: the required '%s' executable is not found in PATH\n", tool_name)
+        return false
+    else
+        return true
+    end
+end
+
+exit(1) if not tool_exists("gnuplot")
+
+pngfile = nil
+cpufreq_src_files = []
+
+ARGV.each {|a|
+    if a =~ /\.png$/ then
+        pngfile = a
+    else
+        cpufreq_src_files.push(a) if File.exists?(a)
+    end
+}
+
+if not pngfile or cpufreq_src_files.size == 0 then
+    printf("Usage: #{$PROGRAM_NAME} <png_file> <cpufreq_src_file> [cpufreq_src_file]\n")
+    printf("Where:\n")
+    printf("    png_file         - resulting PNG file with the plot.\n")
+    printf("    cpufreq_src_file - source file with the cpufreq table\n")
+    printf("                       to parse (from the sunxi-3.4 kernel).\n")
+    exit(1)
+end
+
+data = {}
+# Parse the linux-sunxi cpufreq tables
+tablename = nil
+cpufreq_src_files.each {|filename|
+    File.open(filename).each_line {|l|
+        if l =~ /static struct cpufreq_dvfs (.*?)[_]?dvfs_table\[\]/ then
+            tablename = $1
+            tablename = "unknown" if tablename == ""
+            data[tablename] = [] if not data.has_key?(tablename)
+        end
+        if l =~ /\.freq\s*\=\s*(\d+),\s*\.volt\s*\=\s*(\d+)/ then
+            freq = $1.to_i / 1000000
+            volt = $2.to_f / 1000
+            if freq == 0 then
+                tablename = nil
+            end
+            data[tablename].push([freq, volt]) if tablename
+        end
+    }
+}
+
+# Prepare and feed data to gnuplot
+tmpfiles = {}
+data.each {|tablename, data|
+    tmpfiles[tablename] = Tempfile.new(tablename)
+    data.each {|v|
+        tmpfiles[tablename].printf("%f %f\n", v[0], v[1])
+    }
+    tmpfiles[tablename].flush
+}
+
+IO.popen("gnuplot", "w") {|fh|
+    fh.write "
+        set terminal png size 1600, 900
+        set output '#{pngfile}'
+        set format y '%.3f'
+        set xtics 48
+        set ytics 0.025
+        set grid xtics ytics
+        set yrange [0.9:1.575]
+        set xlabel 'CPU clock frequency, MHz'
+        set ylabel 'Required core voltage for reliable operation, V'
+        set style line 1 lc rgb 'blue' linewidth 10
+        set style line 2 lc rgb 'cyan' linewidth 8
+        set style line 3 lc rgb 'orange' linewidth 6
+        set style line 4 lc rgb 'brown' linewidth 4
+    "
+    plotdata = data.sort.map.with_index {|x, i|
+        "'%s' using 1:2 with linespoints ls #{i + 1} title '%s'" %
+                                        [tmpfiles[x[0]].path, x[0]]
+    }
+    fh.printf("plot %s\n", plotdata.join(","))
+}
