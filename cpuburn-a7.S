@@ -62,6 +62,9 @@ main:
         cmp         r4, #4
         blt         1f
         bl          fork /* have at least 4 cores */
+        cmp         r4, #8
+        blt         1f
+        bl          fork /* have at least 8 cores */
 1:
 #endif
         /* use returned PID as a seed for random */
