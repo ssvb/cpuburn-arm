@@ -41,11 +41,6 @@
     .arm
 
     .global main
-    .global sysconf
-    .global fork
-    .global malloc
-
-#define LOOP_UNROLL_FACTOR 120
 
 .func main
 .type main, %function
@@ -67,68 +62,30 @@ main:
         bl          fork /* have at least 8 cores */
 1:
 #endif
-        /* use returned PID as a seed for random */
-        mov         r2, r0
 
-        vmov.u8     q2, #1
-        vmov.f64    d31, #5.0
-        vmov.f64    d28, #7.0
-        vsqrt.f64   d29, d31
-        vsqrt.f64   d28, d28
+        adr         lr, 9f
+        add         lr, lr, #129
+        mov         r1, #(64 / 4)
+        mov         r2, #(-64 / 4)
+        mov         ip, #1
+        b           0f
 
-        /*
-         * Allocate a large memory block (4M) and initialize it by writing
-         * at a bunch of random locations. This is done in order to cause
-         * artificial fragmentation of physical memory pages and mitigate
-         * cache line aliasing effects. We prefer reproducible results.
-         */
-        mov         r0, #(4 * 1024 * 1024)
-        bl          malloc
-        mov         lr, r0
-        ldr         r0, =12345
-        ldr         r1, =1103515245
-        mov         ip, #65536
-1:      mla         r2, r2, r1, r0
-        mov         r3, r3, lsr #(32 - 16)
-        str         r2, [lr, r3, lsl #6]
-        subs        ip, ip, #1
-        bne         1b
-
-        /* Align buffer pointer up to the next page boundary */
-        ldr         r0, =4095
-        add         lr, lr, r0
-        bic         lr, lr, r0
-
-        ldr         r2, =0x55555555
-        ldr         r3, =0xCCCCCCCC
-        ldr         r5, =(LOOP_UNROLL_FACTOR * 10 * 16 * 4)
-        ldr         r9, =(LOOP_UNROLL_FACTOR)
-        mov         r8, r9
-        b           1f
-
-    .ltorg
     .balign 64
-
-1:
-.rept 10
-        vsqrt.f64   d30, d31
-        pld         [lr, #64]
-    .rept 4
-        smlalne     r0, r1, r2, r3
-        vst2.8      {q2}, [lr, :64]!
-        bne         2f
-2:
-        smlalne     r7, r1, r2, r3
-        bne         2f
-2:
-        vmul.f64    d27, d28, d29
-        bne         2f
-2:
+9:
+    .rept 128
+        .long 0xffffffff
     .endr
-.endr
-        subs        r8, #1
-        bne         1b
-        mov         r8, r9
-        subs        lr, lr, r5
-        bne         1b
+
+    .balign 64
+/****************************************************************************/
+/* Main loop (2 cycles per loop iteration, reaching peak IPC=2)             */
+/****************************************************************************/
+0:      ldrne       r0, [lr, r1, lsl #2]
+        subs        ip, ip, #0
+
+        ldrne       r0, [lr, r2, lsl #2]
+        bne         0b
+
+        mov         r0, #0
+        pop         {r4-r12, pc}
 .endfunc
